@@ -1,0 +1,324 @@
+<script type="application/json" id="tile-settings">
+{
+  "schema": "0.2.0",
+  "settings": [
+    {
+      "type": "STRING",
+      "name": "urlTemplate",
+      "label": "URL Template (use ${text})"
+    },
+    {
+      "type": "STRING",
+      "name": "inputHeightPercent",
+      "label": "Input Box Height (%)",
+      "default": "50"
+    },
+    {
+      "type": "STRING",
+      "name": "inputWidthPercent",
+      "label": "Input Box Width (%)",
+      "default": "80"
+    },
+    {
+      "type": "STRING",
+      "name": "inputTextSizePercent",
+      "label": "Input Text Size (% of tile height)",
+      "default": "12"
+    },
+    {
+      "type": "STRING",
+      "name": "buttonTextSizePercent",
+      "label": "Bottom Text Size (% of tile height)",
+      "default": "8"
+    },
+    {
+      "type": "STRING",
+      "name": "inputBackgroundColor",
+      "label": "Input Box Color (#RRGGBB)",
+      "default": "#242F54"
+    },
+    {
+      "type": "STRING",
+      "name": "textColor",
+      "label": "Text Color (#RRGGBB)",
+      "default": "#FFFFFF"
+    }
+  ],
+  "name": "Send HTTP Text Tile",
+  "dimensions": {"height": 1, "width": 3}
+}
+</script>
+<script src="https://cdn.sharptools.io/js/custom-tiles.js"></script>
+
+<style>
+  :root {
+    --input-width: 80%;
+    --input-height: 50%;
+    --input-text-size: 12vh;
+    --bottom-text-size: 8vh;
+    --input-background: #242F54;
+    --text-color: #FFFFFF;
+    --box-border: max(1px, 0.9vh);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    background: transparent !important;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    color: var(--text-color);
+    font-family: system-ui, sans-serif;
+  }
+
+  .message-tile {
+    position: relative;
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    padding: 2%;
+    overflow: hidden;
+  }
+
+  .tile-action {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .tile-action:active { background: rgb(255 255 255 / 12%); }
+  .tile-action:focus-visible { outline: 2px solid currentColor; outline-offset: -3px; }
+  .tile-action:disabled { cursor: wait; }
+
+  .message-box {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    width: var(--input-width);
+    height: var(--input-height);
+    max-height: 100%;
+    min-width: 0;
+    padding: 1vmin 2vmin;
+    border: var(--box-border) solid currentColor;
+    border-color: color-mix(in srgb, currentColor 55%, transparent);
+    border-radius: clamp(2px, 1.8vmin, 6px);
+    background-color: var(--input-background);
+    cursor: text;
+  }
+
+  .message-box:focus-within { border-color: currentColor; }
+
+  .message {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: 1.25em;
+    max-height: 100%;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text-color);
+    font: inherit;
+    font-size: var(--input-text-size);
+    line-height: 1.25;
+    text-align: left;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    overflow-y: auto;
+    resize: none;
+  }
+
+  .message:placeholder-shown { text-align: center; }
+
+  .message::placeholder {
+    color: var(--text-color);
+    opacity: 0.3;
+  }
+
+  .bottom-text {
+    position: absolute;
+    inset: auto 2% 4%;
+    pointer-events: none;
+    text-align: center;
+    overflow-wrap: anywhere;
+    color: inherit;
+    font-size: var(--bottom-text-size);
+    line-height: 1.15;
+  }
+</style>
+
+<form id="message-tile" class="message-tile">
+  <button id="tile-action" class="tile-action" type="submit" aria-label="Send text"></button>
+
+  <label id="message-box" class="message-box" for="message">
+    <textarea id="message" class="message" wrap="soft" aria-label="Message" placeholder="Type a message" autocomplete="off"></textarea>
+  </label>
+
+  <output id="bottom-text" class="bottom-text" role="status">Enter a message</output>
+</form>
+
+<script>
+  const form = document.getElementById('message-tile');
+  const box = document.getElementById('message-box');
+  const input = document.getElementById('message');
+  const button = document.getElementById('tile-action');
+  const bottomText = document.getElementById('bottom-text');
+  const textPlaceholder = '${text}';
+
+  let urlTemplate = '';
+  let inputTextSizePercent = 12;
+  let bottomTextSizePercent = 8;
+  let successTimer = null;
+
+  function showPrompt() {
+    bottomText.textContent = input.value.trim()
+      ? 'Click to send'
+      : 'Enter a message';
+  }
+
+  function readPercent(value, fallback) {
+    const percent = Number(value);
+    return Number.isFinite(percent) && percent > 0 && percent <= 100
+      ? percent
+      : fallback;
+  }
+
+  function applyColor(property, value) {
+    const color = String(value || '').trim();
+    if (color && CSS.supports('color', color)) {
+      document.documentElement.style.setProperty(property, color);
+    }
+  }
+
+  function fitMessage() {
+    const scrollTop = input.scrollTop;
+    const lineHeight = parseFloat(getComputedStyle(input).lineHeight);
+
+    input.style.height = '0px';
+    input.style.height = `${Math.max(lineHeight, input.scrollHeight)}px`;
+    input.scrollTop = scrollTop;
+  }
+
+  function fitTile() {
+    const height = form.clientHeight;
+    if (!height) return;
+
+    form.style.setProperty(
+      '--input-text-size', `${height * inputTextSizePercent / 100}px`
+    );
+    form.style.setProperty(
+      '--bottom-text-size', `${height * bottomTextSizePercent / 100}px`
+    );
+    form.style.setProperty('--box-border', `${Math.max(1, height * 0.009)}px`);
+    fitMessage();
+  }
+
+  const tileObserver = new ResizeObserver(fitTile);
+  tileObserver.observe(form);
+  tileObserver.observe(box);
+
+  stio.ready((data) => {
+    const settings = data.settings || {};
+    urlTemplate = String(settings.urlTemplate || '').trim();
+    inputTextSizePercent = readPercent(settings.inputTextSizePercent, 12);
+    bottomTextSizePercent = readPercent(settings.buttonTextSizePercent, 8);
+
+    form.style.setProperty('--input-height', `${readPercent(settings.inputHeightPercent, 50)}%`);
+    form.style.setProperty('--input-width', `${readPercent(settings.inputWidthPercent, 80)}%`);
+    applyColor('--input-background', settings.inputBackgroundColor);
+    applyColor('--text-color', settings.textColor);
+
+    fitTile();
+  });
+
+  input.addEventListener('input', () => {
+    fitMessage();
+    if (!button.disabled && successTimer === null) showPrompt();
+  });
+
+  input.addEventListener('keydown', (event) => {
+    if (!event.isComposing && event.key === 'Enter' &&
+        (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      button.click();
+    }
+  });
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (button.disabled) return;
+
+    const originalText = input.value;
+    if (!originalText.trim()) {
+      if (successTimer === null) showPrompt();
+      input.focus();
+      return;
+    }
+
+    clearTimeout(successTimer);
+    successTimer = null;
+
+    if (!urlTemplate.includes(textPlaceholder)) {
+      bottomText.textContent = 'Set a URL template containing ${text}';
+      return;
+    }
+
+    let url;
+    try {
+      const encodedText = encodeURIComponent(originalText);
+      url = new URL(urlTemplate.split(textPlaceholder).join(encodedText));
+
+      if (url.protocol !== 'https:') {
+        bottomText.textContent = 'Use an HTTPS URL';
+        return;
+      }
+    } catch {
+      bottomText.textContent = 'Check the URL template';
+      return;
+    }
+
+    button.disabled = true;
+    bottomText.textContent = 'Sending…';
+
+    try {
+      const response = await fetch(url, { method: 'GET', cache: 'no-store' });
+
+      if (!response.ok) {
+        bottomText.textContent = `HTTP ${response.status}`;
+        return;
+      }
+
+      if (input.value === originalText) {
+        input.value = '';
+        fitMessage();
+      }
+
+      bottomText.textContent = 'Send Successful';
+      successTimer = setTimeout(() => {
+        successTimer = null;
+        showPrompt();
+      }, 3000);
+    } catch {
+      bottomText.textContent = 'Could not confirm delivery';
+    } finally {
+      button.disabled = false;
+    }
+  });
+</script>
